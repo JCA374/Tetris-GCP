@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
 
 # Progressive Training Script for Tetris DQN
 # This script implements the progressive testing approach from fix55.md
