@@ -87,5 +87,7 @@ wandb/
 
 # TensorBoard logs
 runs/
+
+# Log files and directories
 logs/
 
