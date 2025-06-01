@@ -82,14 +82,23 @@ class DQNAgent:
             weight_decay=self.config.get("weight_decay", 0)  # L2 regularization
         )
         
-        # Learning rate scheduler
+        # Learning rate scheduler and warmup
         self.scheduler = None
+        self.warmup_steps = self.config.get("lr_warmup_steps", 0)
+        self.warmup_lr = self.config.get("lr_warmup_lr", self.learning_rate * 0.1)
+        self.current_lr = self.warmup_lr if self.warmup_steps > 0 else self.learning_rate
+        
+        # Set initial learning rate for warmup
+        if self.warmup_steps > 0:
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = self.warmup_lr
+        
         if self.config.get("use_lr_scheduler", False):
             self.scheduler = optim.lr_scheduler.StepLR(
                 self.optimizer,
                 step_size=self.config.get("lr_scheduler_step_size", 1000),
                 gamma=self.config.get("lr_scheduler_gamma", 0.5),
-                last_epoch=-1  # Add this to ensure proper initialization
+                last_epoch=-1
             )
         
         # Choose replay buffer type
@@ -173,6 +182,18 @@ class DQNAgent:
         self.epsilon = self.config.get("epsilon_start", 1.0)
         self.steps_done = 0
         return self
+
+    def _update_learning_rate(self):
+        """Update learning rate with warmup logic."""
+        if self.warmup_steps > 0 and self.training_steps <= self.warmup_steps:
+            # Linear warmup from warmup_lr to learning_rate
+            warmup_progress = self.training_steps / self.warmup_steps
+            current_lr = self.warmup_lr + (self.learning_rate - self.warmup_lr) * warmup_progress
+            
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = current_lr
+            
+            self.current_lr = current_lr
 
     def learn(self):
         """Update the network weights using a batch of experiences, with debug logging."""
@@ -322,6 +343,10 @@ class DQNAgent:
                 )
             # 10c) optimizer step
             self.optimizer.step()
+            
+            # 10d) learning rate management (warmup and scheduling)
+            self._update_learning_rate()
+            
             if self.scheduler is not None:
                self.scheduler.step()
 
@@ -528,12 +553,18 @@ class DQNAgent:
         # Reset optimizer for the new network
         self.optimizer = optim.Adam(
             self.policy_net.parameters(),
-            lr=self.learning_rate,                      # original default
+            lr=self.learning_rate,
             weight_decay=self.config.get("weight_decay", 0)
         )
-        # immediately lower it if desired
-        for pg in self.optimizer.param_groups:
-            pg['lr'] = 3e-5
+        
+        # Reinitialize learning rate scheduler if it was being used
+        if self.config.get("use_lr_scheduler", False):
+            self.scheduler = optim.lr_scheduler.StepLR(
+                self.optimizer,
+                step_size=self.config.get("lr_scheduler_step_size", 1000),
+                gamma=self.config.get("lr_scheduler_gamma", 0.5),
+                last_epoch=-1
+            )
 
         
         print("Model rebuilt successfully with new input channels")
