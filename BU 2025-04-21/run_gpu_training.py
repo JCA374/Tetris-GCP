@@ -166,7 +166,7 @@ def main():
     )
 
     # Reduce the LR on the fly
-    #agent.optimizer.param_groups[0]['lr'] = 3e-5
+    agent.optimizer.param_groups[0]['lr'] = 3e-5
 
     # attach AMP learn if enabled
     if CONFIG.get("use_amp") and CONFIG.get("device") == "cuda":

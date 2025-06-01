@@ -133,10 +133,7 @@ def extract_line_clearing_data(log_content):
     line_clear_pattern = r"LINE CLEARED at step (\d+) - agent cleared (\d+) lines"
     debug_line_clear_pattern = r"DEBUG: Detected (\d+) completed lines at step (\d+)"
     line_clear_reward_pattern = r"@@@ LINE CLEAR REWARD: Base=([\d\.]+) for (\d+) lines @@@"
-    
-    # Modified high reward pattern - lower threshold to catch more events 
-    # Now captures rewards of 100+ instead of 800+
-    high_reward_pattern = r"Episode (\d+)/\d+, Steps: (\d+), Reward: ([1-9]\d\d\.\d+), Avg"
+    high_reward_pattern = r"Episode (\d+)/\d+, Steps: (\d+), Reward: ([89]\d\d\.\d+|1\d\d\d\.\d+), Avg"
     
     line_clearing_events = re.findall(line_clear_pattern, log_content)
     debug_events = re.findall(debug_line_clear_pattern, log_content)
@@ -172,22 +169,17 @@ def extract_line_clearing_data(log_content):
     
     # Process high reward events (inferred line clears)
     for episode, step, reward in high_reward_events:
-        # Estimate the number of lines based on reward value
+        # Assuming rewards in 800-999 range are from single/double line clears
+        # and rewards 1000+ are from triple/tetris clears
         reward_value = float(reward)
+        inferred_lines = 1  # Default assumption
         
-        # Better line estimation based on reward
-        if reward_value >= 2000:
-            inferred_lines = 8  # Multiple Tetris clears or many lines
-        elif reward_value >= 1500:
+        if reward_value >= 1500:
             inferred_lines = 4  # Likely a Tetris (4 lines)
         elif reward_value >= 1000:
             inferred_lines = 3  # Likely a triple
-        elif reward_value >= 500:
+        elif reward_value >= 900:
             inferred_lines = 2  # Likely a double
-        elif reward_value >= 100:
-            inferred_lines = 1  # Likely a single
-        else:
-            continue  # Skip if reward is too low
         
         events.append({
             'episode': int(episode),
@@ -207,175 +199,6 @@ def extract_line_clearing_data(log_content):
     }
     
     return line_clear_data
-
-def analyze_training(learn_data, episode_data, config, line_clear_data, action_data, board_state_info, epsilon_data, log_content):
-    """Generate analysis of the training data."""
-    analysis = []
-    
-    # Configuration summary
-    analysis.append("=== DQN TRAINING ANALYSIS ===")
-    analysis.append(f"Model Type: {config.get('model_type', 'Unknown')}")
-    analysis.append(f"Total Episodes: {config.get('episodes', 'Unknown')}")
-    analysis.append(f"Batch Size: {config.get('batch_size', 'Unknown')}")
-    analysis.append(f"Parallel Environments: {config.get('parallel_envs', 'Unknown')}")
-    analysis.append(f"Learning Rate: {config.get('learning_rate', 'Unknown')}")
-    analysis.append(f"Curriculum Learning: {config.get('curriculum', 'Unknown')}")
-    
-    # Reward structure summary
-    analysis.append("\n=== REWARD STRUCTURE ===")
-    if 'lines_cleared_weight' in config:
-        analysis.append(f"Line Clearing Reward: {config['lines_cleared_weight']}")
-    if 'tetris_bonus' in config:
-        analysis.append(f"Tetris Bonus: {config['tetris_bonus']}")
-    if 'height_weight' in config:
-        analysis.append(f"Height Penalty: {config['height_weight']}")
-    if 'holes_weight' in config:
-        analysis.append(f"Holes Penalty: {config['holes_weight']}")
-    if 'bumpiness_weight' in config:
-        analysis.append(f"Bumpiness Penalty: {config['bumpiness_weight']}")
-    if 'game_over_penalty' in config:
-        analysis.append(f"Game Over Penalty: {config['game_over_penalty']}")
-    
-    # Learning process summary
-    if learn_data['step']:
-        max_steps = max(learn_data['step'])
-        analysis.append(f"\n=== LEARNING PROGRESS (Total Steps: {max_steps}) ===")
-        
-        # Loss analysis
-        if learn_data['loss']:
-            early_loss_avg = np.mean(learn_data['loss'][:min(10, len(learn_data['loss']))])
-            late_loss_avg = np.mean(learn_data['loss'][-min(10, len(learn_data['loss'])):])
-            loss_trend = "DECREASING" if late_loss_avg < early_loss_avg else "INCREASING"
-            analysis.append(f"Loss: Early avg={early_loss_avg:.3f}, Late avg={late_loss_avg:.3f}, Trend: {loss_trend}")
-        
-        # Q-value analysis
-        if learn_data['avg_q']:
-            early_q_avg = np.mean(learn_data['avg_q'][:min(10, len(learn_data['avg_q']))])
-            late_q_avg = np.mean(learn_data['avg_q'][-min(10, len(learn_data['avg_q'])):])
-            q_trend = "INCREASING" if late_q_avg > early_q_avg else "DECREASING"
-            analysis.append(f"Avg Q-value: Early avg={early_q_avg:.3f}, Late avg={late_q_avg:.3f}, Trend: {q_trend}")
-        
-        # Reward analysis
-        if learn_data['reward_mean']:
-            early_reward_avg = np.mean(learn_data['reward_mean'][:min(10, len(learn_data['reward_mean']))])
-            late_reward_avg = np.mean(learn_data['reward_mean'][-min(10, len(learn_data['reward_mean'])):])
-            reward_trend = "INCREASING" if late_reward_avg > early_reward_avg else "DECREASING"
-            analysis.append(f"Batch Rewards: Early avg={early_reward_avg:.3f}, Late avg={late_reward_avg:.3f}, Trend: {reward_trend}")
-        
-        # Gradient norm analysis
-        if learn_data['grad_norm']:
-            grad_norm_avg = np.mean(learn_data['grad_norm'])
-            grad_norm_max = np.max(learn_data['grad_norm'])
-            grad_norm_recent = np.mean(learn_data['grad_norm'][-min(20, len(learn_data['grad_norm'])):])
-            analysis.append(f"Gradient Norm: Avg={grad_norm_avg:.2f}, Max={grad_norm_max:.2f}, Recent avg={grad_norm_recent:.2f}")
-            if grad_norm_avg > 50:
-                analysis.append("WARNING: Average gradient norm is very high (>50). Consider reducing learning rate.")
-    
-    # Exploration rate analysis
-    if epsilon_data:
-        analysis.append("\n=== EXPLORATION ANALYSIS ===")
-        analysis.append(f"Latest epsilon: {epsilon_data[-1]:.4f}")
-        analysis.append(f"Epsilon range: {min(epsilon_data):.4f} - {max(epsilon_data):.4f}")
-        
-        # Check if exploration rate is too low too early
-        if len(episode_data['episode']) > 0 and max(episode_data['episode']) < 1000 and min(epsilon_data) < 0.3:
-            analysis.append("WARNING: Exploration rate (epsilon) is decreasing too quickly. Agent may not explore enough.")
-    
-    # Episode performance summary
-    if episode_data['episode']:
-        analysis.append(f"\n=== EPISODE PERFORMANCE (Episodes: {len(episode_data['episode'])}) ===")
-        
-        if episode_data['reward']:
-            min_reward = min(episode_data['reward'])
-            max_reward = max(episode_data['reward'])
-            avg_reward = np.mean(episode_data['reward'])
-            analysis.append(f"Episode Rewards: Min={min_reward:.2f}, Max={max_reward:.2f}, Avg={avg_reward:.2f}")
-            
-            # Analyze max reward to better estimate line clears
-            if max_reward > 500:
-                # Estimate from max reward - modified for better accuracy
-                est_lines_from_max = max(1, int(max_reward / 200))  # Assume roughly 200 reward per line
-                analysis.append(f"Based on max reward ({max_reward:.2f}), agent likely cleared ~{est_lines_from_max} lines in best episode")
-        
-        if episode_data['steps']:
-            min_steps = min(episode_data['steps'])
-            max_steps = max(episode_data['steps'])
-            avg_steps = np.mean(episode_data['steps'])
-            analysis.append(f"Episode Steps: Min={min_steps}, Max={max_steps}, Avg={avg_steps:.2f}")
-        
-        # Detect if reward is improving
-        if len(episode_data['reward']) > 5:
-            early_episodes = episode_data['reward'][:len(episode_data['reward'])//2]
-            late_episodes = episode_data['reward'][len(episode_data['reward'])//2:]
-            early_avg = np.mean(early_episodes)
-            late_avg = np.mean(late_episodes)
-            if late_avg > early_avg:
-                analysis.append(f"POSITIVE: Average reward is improving (Early: {early_avg:.2f}, Late: {late_avg:.2f})")
-            else:
-                analysis.append(f"CONCERN: Average reward is not improving (Early: {early_avg:.2f}, Late: {late_avg:.2f})")
-    
-    # Line clearing analysis
-    analysis.append("\n=== LINE CLEARING ANALYSIS ===")
-    if line_clear_data and line_clear_data['total_events'] > 0:
-        if line_clear_data['explicit_events'] > 0:
-            analysis.append(f"Explicit line clearing events: {line_clear_data['explicit_events']}")
-        
-        if line_clear_data['inferred_events'] > 0:
-            analysis.append(f"Inferred line clearing events from high rewards: {line_clear_data['inferred_events']}")
-        
-        analysis.append(f"Total estimated lines cleared: {line_clear_data['total_lines']}")
-        
-        # Improved line clearing estimate from max episode reward
-        if episode_data['reward'] and max(episode_data['reward']) > 100:
-            max_reward = max(episode_data['reward'])
-            revised_line_estimate = max(line_clear_data['total_lines'], int(max_reward / 200))
-            if revised_line_estimate > line_clear_data['total_lines']:
-                analysis.append(f"REVISED ESTIMATE: Based on max episode reward, agent likely cleared at least {revised_line_estimate} lines")
-        
-        if line_clear_data['inferred_events'] > 0 and line_clear_data['explicit_events'] == 0:
-            analysis.append("\nNOTE: No explicit line clear logging found, but high rewards strongly suggest line clearing is occurring")
-            analysis.append("Consider adding explicit logging with: print(f\"LINE CLEARED - {lines} lines at step {step}\")")
-        
-        # Calculate line clearing frequency
-        if episode_data['episode'] and episode_data['episode'][-1] > 0:
-            total_episodes = episode_data['episode'][-1]
-            clearing_ratio = line_clear_data['inferred_events'] / total_episodes
-            analysis.append(f"\nLine clearing efficiency: {clearing_ratio:.3f} clearing episodes per episode")
-            if line_clear_data['inferred_events'] > 0:
-                analysis.append(f"Average lines per clearing episode: {line_clear_data['total_lines']/line_clear_data['inferred_events']:.2f}")
-        
-        # Performance trend
-        if len(line_clear_data['events']) >= 10:
-            early_events = line_clear_data['events'][:len(line_clear_data['events'])//2]
-            late_events = line_clear_data['events'][len(line_clear_data['events'])//2:]
-            
-            early_avg_lines = sum(e.get('lines', 0) for e in early_events) / len(early_events)
-            late_avg_lines = sum(e.get('lines', 0) for e in late_events) / len(late_events)
-            
-            if late_avg_lines > early_avg_lines:
-                analysis.append(f"POSITIVE: Line clearing efficiency is improving (Early: {early_avg_lines:.2f}, Late: {late_avg_lines:.2f} lines per event)")
-            else:
-                analysis.append(f"Line clearing efficiency is stable or declining (Early: {early_avg_lines:.2f}, Late: {late_avg_lines:.2f} lines per event)")
-    else:
-        analysis.append("WARNING: No line clearing events detected in logs.")
-        if episode_data['reward'] and max(episode_data['reward']) > 100:
-            max_reward = max(episode_data['reward'])
-            est_lines = max(1, int(max_reward / 200))
-            analysis.append(f"However, max episode reward of {max_reward:.2f} suggests agent cleared approximately {est_lines} lines")
-            analysis.append("Recommendations:")
-            analysis.append("1. Add explicit line clear logging to confirm behavior")
-        else:
-            analysis.append("Recommendations:")
-            analysis.append("1. Add explicit line clear logging to confirm behavior")
-            analysis.append("2. Check reward structure to ensure line clearing is properly incentivized")
-    
-    # Rest of the function remains the same
-    # Board state analysis, action distribution, etc.
-    
-    # Recommendations section also remains largely the same
-    
-    return analysis
-
 
 def extract_action_distribution(log_content):
     """Extract data about action distribution."""
@@ -492,6 +315,272 @@ def extract_epsilon_data(log_content):
     epsilon_values = [float(eps) for eps in epsilon_matches]
     
     return epsilon_values
+
+def analyze_training(learn_data, episode_data, config, line_clear_data, action_data, board_state_info, epsilon_data, log_content):
+    """Generate analysis of the training data."""
+    analysis = []
+    
+    # Configuration summary
+    analysis.append("=== DQN TRAINING ANALYSIS ===")
+    analysis.append(f"Model Type: {config.get('model_type', 'Unknown')}")
+    analysis.append(f"Total Episodes: {config.get('episodes', 'Unknown')}")
+    analysis.append(f"Batch Size: {config.get('batch_size', 'Unknown')}")
+    analysis.append(f"Parallel Environments: {config.get('parallel_envs', 'Unknown')}")
+    analysis.append(f"Learning Rate: {config.get('learning_rate', 'Unknown')}")
+    analysis.append(f"Curriculum Learning: {config.get('curriculum', 'Unknown')}")
+    
+    # Reward structure summary
+    analysis.append("\n=== REWARD STRUCTURE ===")
+    if 'lines_cleared_weight' in config:
+        analysis.append(f"Line Clearing Reward: {config['lines_cleared_weight']}")
+    if 'tetris_bonus' in config:
+        analysis.append(f"Tetris Bonus: {config['tetris_bonus']}")
+    if 'height_weight' in config:
+        analysis.append(f"Height Penalty: {config['height_weight']}")
+    if 'holes_weight' in config:
+        analysis.append(f"Holes Penalty: {config['holes_weight']}")
+    if 'bumpiness_weight' in config:
+        analysis.append(f"Bumpiness Penalty: {config['bumpiness_weight']}")
+    if 'game_over_penalty' in config:
+        analysis.append(f"Game Over Penalty: {config['game_over_penalty']}")
+    
+    # Learning process summary
+    if learn_data['step']:
+        max_steps = max(learn_data['step'])
+        analysis.append(f"\n=== LEARNING PROGRESS (Total Steps: {max_steps}) ===")
+        
+        # Loss analysis
+        if learn_data['loss']:
+            early_loss_avg = np.mean(learn_data['loss'][:min(10, len(learn_data['loss']))])
+            late_loss_avg = np.mean(learn_data['loss'][-min(10, len(learn_data['loss'])):])
+            loss_trend = "DECREASING" if late_loss_avg < early_loss_avg else "INCREASING"
+            analysis.append(f"Loss: Early avg={early_loss_avg:.3f}, Late avg={late_loss_avg:.3f}, Trend: {loss_trend}")
+        
+        # Q-value analysis
+        if learn_data['avg_q']:
+            early_q_avg = np.mean(learn_data['avg_q'][:min(10, len(learn_data['avg_q']))])
+            late_q_avg = np.mean(learn_data['avg_q'][-min(10, len(learn_data['avg_q'])):])
+            q_trend = "INCREASING" if late_q_avg > early_q_avg else "DECREASING"
+            analysis.append(f"Avg Q-value: Early avg={early_q_avg:.3f}, Late avg={late_q_avg:.3f}, Trend: {q_trend}")
+        
+        # Reward analysis
+        if learn_data['reward_mean']:
+            early_reward_avg = np.mean(learn_data['reward_mean'][:min(10, len(learn_data['reward_mean']))])
+            late_reward_avg = np.mean(learn_data['reward_mean'][-min(10, len(learn_data['reward_mean'])):])
+            reward_trend = "INCREASING" if late_reward_avg > early_reward_avg else "DECREASING"
+            analysis.append(f"Batch Rewards: Early avg={early_reward_avg:.3f}, Late avg={late_reward_avg:.3f}, Trend: {reward_trend}")
+        
+        # Gradient norm analysis
+        if learn_data['grad_norm']:
+            grad_norm_avg = np.mean(learn_data['grad_norm'])
+            grad_norm_max = np.max(learn_data['grad_norm'])
+            grad_norm_recent = np.mean(learn_data['grad_norm'][-min(20, len(learn_data['grad_norm'])):])
+            analysis.append(f"Gradient Norm: Avg={grad_norm_avg:.2f}, Max={grad_norm_max:.2f}, Recent avg={grad_norm_recent:.2f}")
+            if grad_norm_avg > 50:
+                analysis.append("WARNING: Average gradient norm is very high (>50). Consider reducing learning rate.")
+    
+    # Exploration rate analysis
+    if epsilon_data:
+        analysis.append("\n=== EXPLORATION ANALYSIS ===")
+        analysis.append(f"Latest epsilon: {epsilon_data[-1]:.4f}")
+        analysis.append(f"Epsilon range: {min(epsilon_data):.4f} - {max(epsilon_data):.4f}")
+        
+        # Check if exploration rate is too low too early
+        if len(episode_data['episode']) > 0 and max(episode_data['episode']) < 1000 and min(epsilon_data) < 0.3:
+            analysis.append("WARNING: Exploration rate (epsilon) is decreasing too quickly. Agent may not explore enough.")
+    
+    # Episode performance summary
+    if episode_data['episode']:
+        analysis.append(f"\n=== EPISODE PERFORMANCE (Episodes: {len(episode_data['episode'])}) ===")
+        
+        if episode_data['reward']:
+            min_reward = min(episode_data['reward'])
+            max_reward = max(episode_data['reward'])
+            avg_reward = np.mean(episode_data['reward'])
+            analysis.append(f"Episode Rewards: Min={min_reward:.2f}, Max={max_reward:.2f}, Avg={avg_reward:.2f}")
+        
+        if episode_data['steps']:
+            min_steps = min(episode_data['steps'])
+            max_steps = max(episode_data['steps'])
+            avg_steps = np.mean(episode_data['steps'])
+            analysis.append(f"Episode Steps: Min={min_steps}, Max={max_steps}, Avg={avg_steps:.2f}")
+        
+        # Detect if reward is improving
+        if len(episode_data['reward']) > 5:
+            early_episodes = episode_data['reward'][:len(episode_data['reward'])//2]
+            late_episodes = episode_data['reward'][len(episode_data['reward'])//2:]
+            early_avg = np.mean(early_episodes)
+            late_avg = np.mean(late_episodes)
+            if late_avg > early_avg:
+                analysis.append(f"POSITIVE: Average reward is improving (Early: {early_avg:.2f}, Late: {late_avg:.2f})")
+            else:
+                analysis.append(f"CONCERN: Average reward is not improving (Early: {early_avg:.2f}, Late: {late_avg:.2f})")
+    
+    # Line clearing analysis
+    analysis.append("\n=== LINE CLEARING ANALYSIS ===")
+    if line_clear_data and line_clear_data['total_events'] > 0:
+        if line_clear_data['explicit_events'] > 0:
+            analysis.append(f"Explicit line clearing events: {line_clear_data['explicit_events']}")
+        
+        if line_clear_data['inferred_events'] > 0:
+            analysis.append(f"Inferred line clearing events from high rewards: {line_clear_data['inferred_events']}")
+        
+        analysis.append(f"Total estimated lines cleared: {line_clear_data['total_lines']}")
+        
+        if line_clear_data['inferred_events'] > 0 and line_clear_data['explicit_events'] == 0:
+            analysis.append("\nNOTE: No explicit line clear logging found, but high rewards strongly suggest line clearing is occurring")
+            analysis.append("Consider adding explicit logging with: print(f\"LINE CLEARED - {lines} lines at step {step}\")")
+        
+        # Calculate line clearing frequency
+        if episode_data['episode'] and episode_data['episode'][-1] > 0:
+            total_episodes = episode_data['episode'][-1]
+            clearing_ratio = line_clear_data['inferred_events'] / total_episodes
+            analysis.append(f"\nLine clearing efficiency: {clearing_ratio:.3f} clearing episodes per episode")
+            analysis.append(f"Average lines per clearing episode: {line_clear_data['total_lines']/line_clear_data['inferred_events']:.2f}")
+        
+        # Performance trend
+        if len(line_clear_data['events']) >= 10:
+            early_events = line_clear_data['events'][:len(line_clear_data['events'])//2]
+            late_events = line_clear_data['events'][len(line_clear_data['events'])//2:]
+            
+            early_avg_lines = sum(e.get('lines', 0) for e in early_events) / len(early_events)
+            late_avg_lines = sum(e.get('lines', 0) for e in late_events) / len(late_events)
+            
+            if late_avg_lines > early_avg_lines:
+                analysis.append(f"POSITIVE: Line clearing efficiency is improving (Early: {early_avg_lines:.2f}, Late: {late_avg_lines:.2f} lines per event)")
+            else:
+                analysis.append(f"Line clearing efficiency is stable or declining (Early: {early_avg_lines:.2f}, Late: {late_avg_lines:.2f} lines per event)")
+    else:
+        analysis.append("WARNING: No line clearing events detected. Agent may not be clearing lines.")
+        analysis.append("Recommendations:")
+        analysis.append("1. Add explicit line clear logging to confirm behavior")
+        analysis.append("2. Check reward structure to ensure line clearing is properly incentivized")
+    # Board state analysis
+    if board_state_info and (board_state_info['height_data'] or board_state_info['potential_data']):
+        analysis.append("\n=== BOARD STATE ANALYSIS ===")
+        
+        # Height and holes analysis
+        if board_state_info['height_data']:
+            heights = [d['height'] for d in board_state_info['height_data']]
+            holes = [d['holes'] for d in board_state_info['height_data']]
+            
+            avg_height = np.mean(heights)
+            avg_holes = np.mean(holes)
+            max_height = max(heights)
+            max_holes = max(holes)
+            
+            analysis.append(f"Average board height: {avg_height:.1f}")
+            analysis.append(f"Maximum board height: {max_height}")
+            analysis.append(f"Average holes: {avg_holes:.1f}")
+            analysis.append(f"Maximum holes: {max_holes}")
+            
+            # Check if board is getting too high
+            if avg_height > 10:  # Assuming grid height = 14
+                analysis.append("WARNING: Average board height is high. Agent is struggling to clear lines.")
+            
+            # Check if too many holes
+            if avg_holes > 5:
+                analysis.append("WARNING: High number of holes. Agent is not managing piece placement well.")
+        
+        # Potential lines analysis
+        if board_state_info['potential_data']:
+            avg_potential = np.mean(board_state_info['potential_data'])
+            max_potential = max(board_state_info['potential_data'])
+            
+            analysis.append(f"Average potential lines: {avg_potential:.2f}")
+            analysis.append(f"Maximum potential lines: {max_potential:.2f}")
+            
+            # Check if agent is setting up line clears
+            if max_potential > 3 and line_clear_data['total_events'] == 0:
+                analysis.append("NOTE: Agent is creating potential line clears but not executing them.")
+    
+    # Action distribution analysis
+    if action_data and action_data['avg_dist']:
+        analysis.append("\n=== ACTION DISTRIBUTION ANALYSIS ===")
+        avg = action_data['avg_dist']
+        total = sum(avg.values())
+        
+        # Calculate percentages
+        pct = {k: (v/total*100) for k, v in avg.items()}
+        
+        analysis.append(f"Left: {pct['left']:.1f}%, Right: {pct['right']:.1f}%, Rotate: {pct['rotate']:.1f}%")
+        analysis.append(f"Down: {pct['down']:.1f}%, Drop: {pct['drop']:.1f}%, Nothing: {pct['nothing']:.1f}%")
+        
+        # Check for concerning patterns
+        if pct['nothing'] > 50:
+            analysis.append("WARNING: Agent is choosing 'do nothing' too frequently (>50%).")
+        
+        if pct['drop'] < 5:
+            analysis.append("WARNING: Agent rarely uses 'drop' action (<5%). May not be effective at placing pieces.")
+        
+        if pct['rotate'] < 10:
+            analysis.append("WARNING: Agent rarely rotates pieces (<10%). Not optimizing piece placement.")
+    
+    # Health check and recommendations
+    analysis.append("\n=== TRAINING HEALTH CHECK ===")
+    
+    # Check for line clearing issues
+    if line_clear_data['total_events'] == 0:
+        analysis.append("CRITICAL: Agent is not clearing any lines. This is the most important issue to fix.")
+    
+    # Q-value health check
+    if learn_data['q_mean']:
+        q_mean_recent = np.mean(learn_data['q_mean'][-min(20, len(learn_data['q_mean'])):])
+        if q_mean_recent < -10:
+            analysis.append("WARNING: Recent Q-values are very negative. Agent may be developing a pessimistic policy.")
+        elif q_mean_recent > 50:
+            analysis.append("WARNING: Recent Q-values are very high. Potential value overestimation.")
+    
+    # Loss stability check
+    if learn_data['loss'] and len(learn_data['loss']) > 10:
+        loss_std = np.std(learn_data['loss'][-20:])
+        loss_mean = np.mean(learn_data['loss'][-20:])
+        loss_cv = loss_std / loss_mean if loss_mean > 0 else 0
+        if loss_cv > 0.5:
+            analysis.append(f"WARNING: Loss is unstable (coefficient of variation: {loss_cv:.2f}). Consider adjusting learning rate.")
+    
+    # Gradient norm stability check
+    if learn_data['grad_norm'] and len(learn_data['grad_norm']) > 10:
+        if np.mean(learn_data['grad_norm'][-20:]) > 40:
+            analysis.append("WARNING: Recent gradient norms are high. Consider reducing learning rate.")
+    
+    # Recommendations
+    analysis.append("\n=== RECOMMENDATIONS ===")
+    
+    # Line clearing recommendations
+    if line_clear_data['total_events'] == 0:
+        analysis.append("1. CRITICAL: Increase line clearing rewards dramatically:")
+        analysis.append("   - Set reward_lines_cleared_weight to 10000.0")
+        analysis.append("   - Set reward_tetris_bonus to 20000.0")
+        analysis.append("   - Consider reducing other rewards/penalties to make line clearing dominant")
+    
+    # Check if reward is improving
+    if episode_data['reward'] and len(episode_data['reward']) > 5:
+        if np.mean(episode_data['reward'][-5:]) < np.mean(episode_data['reward'][:5]):
+            analysis.append("2. Agent is not improving. Consider revising reward function or exploring more.")
+    
+    # Check for potential exploration issues
+    if epsilon_data and min(epsilon_data) < 0.3 and len(episode_data['episode']) < 1000:
+        analysis.append("3. Exploration rate is decreasing too quickly. Slow down epsilon decay.")
+    
+    # Check for gradient issues
+    if learn_data['grad_norm'] and np.mean(learn_data['grad_norm']) > 30:
+        analysis.append("4. Gradient norms are high. Consider reducing learning rate or implementing gradient clipping.")
+    
+    # Check for value function issues
+    if learn_data['q_mean'] and np.mean(learn_data['q_mean'][-min(20, len(learn_data['q_mean'])):]) < -20:
+        analysis.append("5. Q-values are very negative. Consider scaling rewards or adjusting discount factor.")
+    
+    # Action distribution recommendations
+    if action_data and action_data['avg_dist']:
+        if action_data['avg_dist']['nothing'] > 0.5 * sum(action_data['avg_dist'].values()):
+            analysis.append("6. Agent is using 'do nothing' action too often. Check reward structure.")
+    
+    # Curriculum learning recommendation
+    if config.get('curriculum') == True and line_clear_data['total_events'] == 0:
+        analysis.append("7. Consider disabling curriculum learning until agent learns basic line clearing.")
+    
+    return analysis
 
 def generate_plots(learn_data, episode_data, line_clear_data, action_data, board_state_info, epsilon_data, output_prefix):
     """Generate plots of training metrics."""
