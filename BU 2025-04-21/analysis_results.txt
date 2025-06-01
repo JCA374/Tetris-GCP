@@ -1,0 +1,31 @@
+=== DQN TRAINING ANALYSIS ===
+Model Type: dueldqn
+Total Episodes: 20000
+Batch Size: 512
+Parallel Environments: 4
+Learning Rate: 1e-05
+Curriculum Learning: True
+
+=== REWARD STRUCTURE ===
+
+=== LEARNING PROGRESS (Total Steps: 66496) ===
+Loss: Early avg=1.653, Late avg=0.325, Trend: DECREASING
+Avg Q-value: Early avg=1.462, Late avg=-176.489, Trend: DECREASING
+Batch Rewards: Early avg=-0.574, Late avg=-9.000, Trend: DECREASING
+Gradient Norm: Avg=29.57, Max=197.56, Recent avg=6.11
+
+=== EPISODE PERFORMANCE (Episodes: 744) ===
+Episode Rewards: Min=-18309.00, Max=973.45, Avg=-2015.23
+Based on max reward (973.45), agent likely cleared ~4 lines in best episode
+Episode Steps: Min=110, Max=677022, Avg=242233.21
+CONCERN: Average reward is not improving (Early: -1318.08, Late: -2712.38)
+
+=== LINE CLEARING ANALYSIS ===
+Inferred line clearing events from high rewards: 9
+Total estimated lines cleared: 14
+
+NOTE: No explicit line clear logging found, but high rewards strongly suggest line clearing is occurring
+Consider adding explicit logging with: print(f"LINE CLEARED - {lines} lines at step {step}")
+
+Line clearing efficiency: 0.001 clearing episodes per episode
+Average lines per clearing episode: 1.56
