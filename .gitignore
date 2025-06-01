@@ -1,5 +1,7 @@
 # Backup directories
 BU 2025-04-21/
+*.log
+
 
 # Python
 __pycache__/
